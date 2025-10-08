@@ -384,6 +384,8 @@ running: true,
 let currentUser = null;
 let editingParticipantIndex = null;
 let editingStockIndex = null;
+let tickerHandle = null;  // ← ADD THIS HERE
+let adminRefreshHandle = null;
 
 function randBetween(min,max){ return Math.random()*(max-min)+min }
 function formatINR(n){ return "Ƶ" + Number(n).toLocaleString('en-IN', {maximumFractionDigits:2, minimumFractionDigits:2}) }
@@ -645,7 +647,7 @@ startTicker();
 Admin Auto-Refresh
 ------------------------- */
 
-let adminRefreshHandle = null;
+
 
 async function refreshAdminData(){
 if(currentUser && currentUser.role === 'admin'){
@@ -1406,14 +1408,11 @@ restartTicker();
 });
 
 
-if(systemState.running) restartTicker(); else stopTicker();
-
-
 /* -------------------------
 Ticker control
 ------------------------- */
 
-let tickerHandle = null;
+
 
 function startTicker(){
 stopTicker();
@@ -1499,4 +1498,5 @@ init();
 </script>
 </body>
 </html>
+
 
