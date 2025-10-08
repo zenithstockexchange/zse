@@ -1183,7 +1183,7 @@ const c = systemState.companies.find(x=>x.symbol===symbol);
 expandedSymbol.textContent = c.symbol;
 expandedName.textContent = c.name;
 expandedPrice.textContent = formatINR(c.price);
-expandedChange.textContent = ${c.change>=0?'+':''}${c.change.toFixed(2)} (${(((c.change)/(c.price - c.change))*100)||0 .toFixed(2)}%);
+expandedChange.textContent = (c.change>=0?'+':'') + c.change.toFixed(2) + " (" + (((c.change)/(c.price - c.change))*100||0).toFixed(2) + "%)";
 expandedVol.textContent = Vol ${c.volume.toLocaleString()};
 expandedArea.style.display = "block";
 
@@ -1519,6 +1519,7 @@ init();
 </script>
 </body>
 </html>
+
 
 
 
