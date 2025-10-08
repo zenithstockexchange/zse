@@ -1272,7 +1272,7 @@ if(expandedSymbolSelected){
 const c = systemState.companies.find(x=>x.symbol===expandedSymbolSelected);
 if(c){
 expandedPrice.textContent = formatINR(c.price);
-expandedVol.textContent = Vol ${c.volume.toLocaleString()};
+expandedVol.textContent = "Vol" + c.volume.toLocaleString();
 drawExpandedChart(c.history, c.name);
 } else {
 collapseExpanded();
@@ -1519,6 +1519,7 @@ init();
 </script>
 </body>
 </html>
+
 
 
 
