@@ -1390,25 +1390,26 @@ Confirmation Dialogs
 
 function showBuyConfirmation(symbol, qty, price, totalCost) {
 return confirm(
-CONFIRM PURCHASE\n\n +
-Stock: ${symbol}\n +
-Quantity: ${qty} shares\n +
-Price per share: ${formatINR(price)}\n +
-Total Amount: ${formatINR(totalCost)}\n\n +
-${formatINR(totalCost)} will be deducted from your account.\n\n +
-Do you want to proceed?
+"CONFIRM PURCHASE\n\n" +
+"Stock: " + symbol + "\n" +
+"Quantity: " + qty + " shares\n" +
+"Price per share: " + formatINR(price) + "\n" +
+"Total Amount: " + formatINR(totalCost) + "\n\n" +
+formatINR(totalCost) + " will be deducted from your account.\n\n" +
+"Do you want to proceed?"
 );
 }
 
+
 function showSellConfirmation(symbol, qty, livePrice, totalProceeds) {
 return confirm(
-CONFIRM SALE\n\n +
-Stock: ${symbol}\n +
-Quantity: ${qty} shares\n +
-Price per share: ${formatINR(livePrice)}\n +
-Total Amount: ${formatINR(totalProceeds)}\n\n +
-${formatINR(totalProceeds)} will be deposited to your account.\n\n +
-Do you want to proceed?
+"CONFIRM SALE\n\n" +
+"Stock: " + symbol + "\n" +
+"Quantity: " + qty + " shares\n" +
+"Price per share: " + formatINR(livePrice) + "\n" +
+"Total Amount: " + formatINR(totalProceeds) + "\n\n" +
+formatINR(totalProceeds) + " will be deposited to your account.\n\n" +
+"Do you want to proceed?"
 );
 }
 
@@ -1518,3 +1519,4 @@ init();
 </script>
 </body>
 </html>
+
