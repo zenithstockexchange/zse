@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Zenith Stock Exchange — Multi-User</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 /* Basic reset + fonts */
 :root{
@@ -359,27 +360,27 @@ Built for demo — not financial advice.
 
 <script>
 /* -------------------------
+Supabase Configuration
+------------------------- */
+
+// REPLACE THESE WITH YOUR SUPABASE CREDENTIALS
+const SUPABASE_URL = 'https://doizdbmqzwmzaqwnotej.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_4hZf2fDPmK1voXA_oJZaEQ_6yn27sCc';
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* -------------------------
 System Configuration & Auth
 ------------------------- */
 
-const STORAGE_KEY = "zenith_multi_v1";
 const ADMIN_DEFAULT = {username: "admin", password: "admin123", role: "admin"};
 
 let systemState = {
 marketRunning: true,
 admin: ADMIN_DEFAULT,
 participants: [],
-stocks: [
-{ symbol: "ZFN", name: "Zenith Foods", price: 120.0 },
-{ symbol: "AER", name: "AeroNova", price: 430.5 },
-{ symbol: "BIQ", name: "BioQuanta", price: 85.25 },
-{ symbol: "CYR", name: "CyberYarn", price: 26.75 },
-{ symbol: "SOL", name: "Solara Energies", price: 210.0 },
-{ symbol: "NEX", name: "NexRetail", price: 58.4 },
-{ symbol: "MTR", name: "MetroDrive", price: 340.0 },
-{ symbol: "PIX", name: "PixelWorks", price: 14.6 },
-],
-companies: [], // runtime state
+stocks: [],
+companies: [],
 intervalMs: 5000,
 running: true,
 };
@@ -392,50 +393,197 @@ function randBetween(min,max){ return Math.random()*(max-min)+min }
 function formatINR(n){ return "₹" + Number(n).toLocaleString('en-IN', {maximumFractionDigits:2, minimumFractionDigits:2}) }
 
 /* -------------------------
-Persistence
+Supabase Functions
 ------------------------- */
 
-function loadSystemState(){
+async function loadSystemState(){
 try{
-const raw = localStorage.getItem(STORAGE_KEY);
-if(raw){
-const parsed = JSON.parse(raw);
-// Only copy a few allowed keys from saved state to avoid unexpected runtime values
-if(parsed.marketRunning !== undefined) systemState.marketRunning = parsed.marketRunning;
-if(parsed.admin) systemState.admin = parsed.admin;
-if(Array.isArray(parsed.participants)) systemState.participants = parsed.participants;
-if(Array.isArray(parsed.stocks)) systemState.stocks = parsed.stocks;
-if(parsed.intervalMs) systemState.intervalMs = parsed.intervalMs;
-}
-}catch(e){ console.warn("load failed",e) }
-initializeCompanies();
+// Load system config
+const { data: config, error: configError } = await supabase
+.from('system_config')
+.select('*')
+.eq('id', 1)
+.single();
+
+if (!configError && config) {
+systemState.marketRunning = config.market_running;
+systemState.intervalMs = config.interval_ms;
 }
 
-function saveSystemState(){
-const toSave = {
-marketRunning: systemState.marketRunning,
-admin: systemState.admin,
-participants: systemState.participants,
-stocks: systemState.stocks,
-intervalMs: systemState.intervalMs,
+// Load participants
+const { data: participants, error: participantsError } = await supabase
+.from('participants')
+.select('*');
+
+if (!participantsError && participants) {
+systemState.participants = participants.map(p => ({
+username: p.username,
+password: p.password,
+cash: Number(p.cash),
+investments: p.investments || []
+}));
+}
+
+// Load stocks
+const { data: stocks, error: stocksError } = await supabase
+.from('stocks')
+.select('*');
+
+if (!stocksError && stocks) {
+systemState.stocks = stocks.map(s => ({
+symbol: s.symbol,
+name: s.name,
+price: Number(s.price)
+}));
+}
+
+// Load admin
+const { data: admin, error: adminError } = await supabase
+.from('admin_users')
+.select('*')
+.eq('username', 'admin')
+.single();
+
+if (!adminError && admin) {
+systemState.admin = {
+username: admin.username,
+password: admin.password,
+role: 'admin'
 };
-localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
 }
 
-function initializeCompanies(){
+await initializeCompanies();
+}catch(e){ 
+console.warn("load failed", e);
+}
+}
+
+async function saveSystemConfig(){
+await supabase
+.from('system_config')
+.update({ 
+market_running: systemState.marketRunning,
+interval_ms: systemState.intervalMs 
+})
+.eq('id', 1);
+}
+
+async function saveParticipant(participant){
+const { data, error } = await supabase
+.from('participants')
+.upsert({
+username: participant.username,
+password: participant.password,
+cash: participant.cash,
+investments: participant.investments
+}, { onConflict: 'username' })
+.select();
+
+return !error;
+}
+
+async function deleteParticipantFromDB(username){
+await supabase
+.from('participants')
+.delete()
+.eq('username', username);
+}
+
+async function saveStockToDB(stock){
+const { data, error } = await supabase
+.from('stocks')
+.upsert({
+symbol: stock.symbol,
+name: stock.name,
+price: stock.price,
+current_price: stock.price  // ← Add this line
+}, { onConflict: 'symbol' })
+.select();
+
+return !error;
+}
+  
+async function deleteStockFromDB(symbol){
+await supabase
+.from('stocks')
+.delete()
+.eq('symbol', symbol);
+}
+
+async function updateStockPrices() {
+// Update prices in systemState.companies (simulated market movement)
+systemState.companies = systemState.companies.map(c => {
+const volatility = 0.04;
+const pct = (Math.random() * 2 - 1) * volatility;
+const newPrice = Math.max(0.01, c.price * (1 + pct));
+const change = newPrice - c.price;
+const newHistory = [...c.history.slice(1), Number(newPrice.toFixed(2))];
+const newVolume = c.volume + Math.floor(randBetween(100, 20000));
+return {
+...c,
+price: Number(newPrice.toFixed(2)),
+change: Number(change.toFixed(2)),
+history: newHistory,
+volume: newVolume
+};
+});
+
+// Save ALL updated prices to Supabase
+const updates = systemState.companies.map(c => ({
+symbol: c.symbol,
+current_price: c.price
+}));
+
+// Batch update to Supabase
+for (const update of updates) {
+await supabase
+.from('stocks')
+.update({ current_price: update.current_price })
+.eq('symbol', update.symbol);
+}
+}
+
+async function fetchCurrentPrices() {
+// Fetch current prices from Supabase
+const { data: stocks, error } = await supabase
+.from('stocks')
+.select('symbol, current_price');
+
+if (!error && stocks) {
+// Update local companies with Supabase prices
+stocks.forEach(stock => {
+const company = systemState.companies.find(c => c.symbol === stock.symbol);
+if (company && stock.current_price) {
+const oldPrice = company.price;
+const newPrice = Number(stock.current_price);
+company.price = newPrice;
+company.change = newPrice - oldPrice;
+// Update history
+company.history = [...company.history.slice(1), newPrice];
+}
+});
+}
+}
+
+
+
+async function initializeCompanies(){
 systemState.companies = systemState.stocks.map(s => ({
 ...s,
 change: 0,
-history: Array.from({length:12}, () => s.price),
+history: Array.from({length:12}, () => s.current_price || s.price),
 volume: Math.floor(randBetween(1000,50000))
 }));
+
+// Fetch current prices from Supabase
+await fetchCurrentPrices();
 }
 
 /* -------------------------
 Authentication
 ------------------------- */
 
-function login(username, password){
+async function login(username, password){
 // Check admin
 if(username === systemState.admin.username && password === systemState.admin.password){
 currentUser = {username, role: "admin"};
@@ -447,8 +595,7 @@ if(participant){
 if(!systemState.marketRunning){
 return "market_stopped";
 }
-// Create a shallow copy so currentUser.data can be mutated safely
-currentUser = {username, role: "participant", data: {...participant}};
+currentUser = {username, role: "participant", data: participant};
 return true;
 }
 return false;
@@ -456,6 +603,7 @@ return false;
 
 function logout(){
 currentUser = null;
+stopAdminRefresh();
 showLoginScreen();
 }
 
@@ -486,6 +634,7 @@ function showAdminView(){
 document.getElementById('adminPanel').style.display = 'block';
 document.getElementById('participantView').style.display = 'none';
 renderAdminDashboard();
+startAdminRefresh();
 }
 
 function showParticipantView(){
@@ -496,6 +645,46 @@ renderParticipantView();
 startTicker();
 }
 
+/* -------------------------
+Admin Auto-Refresh
+------------------------- */
+
+let adminRefreshHandle = null;
+
+async function refreshAdminData(){
+if(currentUser && currentUser.role === 'admin'){
+// Fetch latest data from Supabase
+const { data: participants, error: participantsError } = await supabase
+.from('participants')
+.select('*');
+
+if (!participantsError && participants) {
+systemState.participants = participants.map(p => ({
+username: p.username,
+password: p.password,
+cash: Number(p.cash),
+investments: p.investments || []
+}));
+}
+
+// Re-render with fresh data
+renderAdminDashboard();
+}
+}
+
+function startAdminRefresh(){
+stopAdminRefresh();
+adminRefreshHandle = setInterval(()=> {
+refreshAdminData();
+}, 3000); // Refresh every 3 seconds
+}
+
+function stopAdminRefresh(){
+if(adminRefreshHandle) { 
+clearInterval(adminRefreshHandle); 
+adminRefreshHandle = null; 
+}
+}
 /* -------------------------
 Admin Dashboard
 ------------------------- */
@@ -511,59 +700,178 @@ statusEl.textContent = 'Stopped';
 statusEl.className = 'market-status stopped';
 }
 
-// Participants
+// Participants with detailed portfolio
 const participantList = document.getElementById('participantList');
 participantList.innerHTML = '';
 if(systemState.participants.length === 0){
 participantList.innerHTML = '<div class="muted small">No participants yet.</div>';
 } else {
 systemState.participants.forEach((p, idx) => {
+// Calculate portfolio value
+let holdingsValue = 0;
+let holdingsHTML = '';
+
+if(p.investments && p.investments.length > 0) {
+p.investments.forEach(inv => {
+const currentStock = systemState.companies.find(c => c.symbol === inv.symbol);
+const currentPrice = currentStock ? currentStock.price : inv.buyPrice;
+const investmentValue = currentPrice * inv.qty;
+const profitLoss = (currentPrice - inv.buyPrice) * inv.qty;
+const profitLossPercent = ((currentPrice - inv.buyPrice) / inv.buyPrice) * 100;
+
+holdingsValue += investmentValue;
+
+const plColor = profitLoss >= 0 ? '#16a34a' : '#ef4444';
+holdingsHTML += `
+<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid #f1f5f9">
+<div>
+<strong>${inv.symbol}</strong>: ${inv.qty} shares @ ${formatINR(inv.buyPrice)}
+</div>
+<div style="text-align:right">
+<div>Value: ${formatINR(investmentValue)}</div>
+<div style="color:${plColor};font-weight:600">
+${profitLoss >= 0 ? '+' : ''}${formatINR(profitLoss)} (${profitLoss >= 0 ? '+' : ''}${profitLossPercent.toFixed(2)}%)
+</div>
+</div>
+</div>
+`;
+});
+} else {
+holdingsHTML = '<div class="small muted" style="padding:4px 0">No holdings</div>';
+}
+
+const totalPortfolio = Number(p.cash) + holdingsValue;
+const totalInvested = p.investments.reduce((acc, inv) => acc + (inv.buyPrice * inv.qty), 0);
+const overallPL = holdingsValue - totalInvested;
+const overallPLColor = overallPL >= 0 ? '#16a34a' : '#ef4444';
+
 const div = document.createElement('div');
 div.className = 'participant-item';
+div.style.flexDirection = 'column';
+div.style.alignItems = 'stretch';
 div.innerHTML = `
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
 <div>
-<div style="font-weight:600">${p.username}</div>
-<div class="small muted">Balance: ${formatINR(p.cash)} | Holdings: ${p.investments ? p.investments.length : 0}</div>
+<div style="font-weight:600;font-size:16px">${p.username}</div>
+<div class="small muted">Cash: ${formatINR(p.cash)} | Holdings: ${p.investments.length} stocks</div>
 </div>
 <div class="participant-actions">
 <button class="ghost" onclick="editParticipant(${idx})">Edit</button>
 <button class="danger" onclick="deleteParticipant(${idx})">Delete</button>
+</div>
+</div>
+<div style="background:#f8fafc;padding:10px;border-radius:8px;border:1px solid #e2e8f0">
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:8px">
+<div>
+<div class="small muted">Total Portfolio</div>
+<div style="font-weight:700;font-size:16px">${formatINR(totalPortfolio)}</div>
+</div>
+<div>
+<div class="small muted">Holdings Value</div>
+<div style="font-weight:700;font-size:16px">${formatINR(holdingsValue)}</div>
+</div>
+<div>
+<div class="small muted">Overall P/L</div>
+<div style="font-weight:700;font-size:16px;color:${overallPLColor}">
+${overallPL >= 0 ? '+' : ''}${formatINR(overallPL)}
+</div>
+</div>
+</div>
+${p.investments.length > 0 ? `
+<div style="margin-top:8px">
+<div class="small muted" style="margin-bottom:4px;font-weight:600">Investment Details:</div>
+${holdingsHTML}
+</div>
+` : holdingsHTML}
 </div>
 `;
 participantList.appendChild(div);
 });
 }
 
-// Stocks
+// Stocks with current prices and changes
 const stockList = document.getElementById('stockList');
 stockList.innerHTML = '';
 systemState.stocks.forEach((s, idx) => {
+// Find current live price
+const liveStock = systemState.companies.find(c => c.symbol === s.symbol);
+const currentPrice = liveStock ? liveStock.price : s.price;
+const priceChange = currentPrice - s.price;
+const priceChangePercent = ((currentPrice - s.price) / s.price) * 100;
+const changeColor = priceChange >= 0 ? '#16a34a' : '#ef4444';
+
+// Calculate total shares held by all participants
+let totalShares = 0;
+let totalInvested = 0;
+systemState.participants.forEach(p => {
+p.investments.forEach(inv => {
+if(inv.symbol === s.symbol) {
+totalShares += inv.qty;
+totalInvested += inv.buyPrice * inv.qty;
+}
+});
+});
+
+const currentValue = currentPrice * totalShares;
+const marketPL = currentValue - totalInvested;
+
 const div = document.createElement('div');
 div.className = 'stock-item';
+div.style.flexDirection = 'column';
+div.style.alignItems = 'stretch';
 div.innerHTML = `
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
 <div>
-<div style="font-weight:600">${s.symbol} - ${s.name}</div>
+<div style="font-weight:600;font-size:16px">${s.symbol} - ${s.name}</div>
 <div class="small muted">Starting Price: ${formatINR(s.price)}</div>
 </div>
 <div class="stock-actions">
 <button class="ghost" onclick="editStock(${idx})">Edit</button>
 <button class="danger" onclick="deleteStock(${idx})">Delete</button>
 </div>
+</div>
+<div style="background:#f8fafc;padding:10px;border-radius:8px;border:1px solid #e2e8f0">
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
+<div>
+<div class="small muted">Current Price</div>
+<div style="font-weight:700;font-size:16px">${formatINR(currentPrice)}</div>
+</div>
+<div>
+<div class="small muted">Price Change</div>
+<div style="font-weight:700;font-size:14px;color:${changeColor}">
+${priceChange >= 0 ? '+' : ''}${formatINR(priceChange)}
+<div class="small" style="color:${changeColor}">(${priceChange >= 0 ? '+' : ''}${priceChangePercent.toFixed(2)}%)</div>
+</div>
+</div>
+<div>
+<div class="small muted">Shares Held</div>
+<div style="font-weight:700;font-size:16px">${totalShares}</div>
+<div class="small muted">by participants</div>
+</div>
+<div>
+<div class="small muted">Market P/L</div>
+<div style="font-weight:700;font-size:14px;color:${marketPL >= 0 ? '#16a34a' : '#ef4444'}">
+${marketPL >= 0 ? '+' : ''}${formatINR(marketPL)}
+</div>
+<div class="small muted">Total: ${formatINR(currentValue)}</div>
+</div>
+</div>
+</div>
 `;
 stockList.appendChild(div);
 });
 }
 
-function startMarket(){
+async function startMarket(){
 systemState.marketRunning = true;
-saveSystemState();
+await saveSystemConfig();
 renderAdminDashboard();
 alert('Market started! Participants can now login and trade.');
 }
 
-function stopMarket(){
+async function stopMarket(){
 systemState.marketRunning = false;
-saveSystemState();
+await saveSystemConfig();
 renderAdminDashboard();
 alert('Market stopped! Participants cannot login or trade.');
 }
@@ -591,7 +899,7 @@ document.getElementById('modalParticipantBalance').value = p.cash;
 document.getElementById('participantModal').classList.add('active');
 }
 
-function saveParticipant(){
+async function saveParticipantHandler(){
 const username = document.getElementById('modalParticipantId').value.trim();
 const password = document.getElementById('modalParticipantPassword').value;
 const cash = Number(document.getElementById('modalParticipantBalance').value);
@@ -615,30 +923,32 @@ alert('Username already exists');
 return;
 }
 
-if(editingParticipantIndex !== null){
-// Edit existing
-systemState.participants[editingParticipantIndex].username = username;
-systemState.participants[editingParticipantIndex].password = password;
-systemState.participants[editingParticipantIndex].cash = cash;
-} else {
-// Add new
-systemState.participants.push({
+const participant = {
 username,
 password,
 cash,
-investments: []
-});
-}
+investments: editingParticipantIndex !== null ? systemState.participants[editingParticipantIndex].investments : []
+};
 
-saveSystemState();
+const success = await saveParticipant(participant);
+if(success){
+if(editingParticipantIndex !== null){
+systemState.participants[editingParticipantIndex] = participant;
+} else {
+systemState.participants.push(participant);
+}
 document.getElementById('participantModal').classList.remove('active');
 renderAdminDashboard();
+} else {
+alert('Failed to save participant');
+}
 }
 
-function deleteParticipant(index){
-if(!confirm(`Delete participant ${systemState.participants[index].username}?`)) return;
+async function deleteParticipant(index){
+if(!confirm(Delete participant ${systemState.participants[index].username}?)) return;
+const username = systemState.participants[index].username;
+await deleteParticipantFromDB(username);
 systemState.participants.splice(index, 1);
-saveSystemState();
 renderAdminDashboard();
 }
 
@@ -665,7 +975,7 @@ document.getElementById('modalStockPrice').value = s.price;
 document.getElementById('stockModal').classList.add('active');
 }
 
-function saveStock(){
+async function saveStockHandler(){
 const symbol = document.getElementById('modalStockSymbol').value.trim().toUpperCase();
 const name = document.getElementById('modalStockName').value.trim();
 const price = Number(document.getElementById('modalStockPrice').value);
@@ -684,26 +994,28 @@ alert('Stock symbol already exists');
 return;
 }
 
-if(editingStockIndex !== null){
-// Edit existing
-systemState.stocks[editingStockIndex].symbol = symbol;
-systemState.stocks[editingStockIndex].name = name;
-systemState.stocks[editingStockIndex].price = price;
-} else {
-// Add new
-systemState.stocks.push({symbol, name, price});
-}
+const stock = {symbol, name, price};
+const success = await saveStockToDB(stock);
 
-saveSystemState();
+if(success){
+if(editingStockIndex !== null){
+systemState.stocks[editingStockIndex] = stock;
+} else {
+systemState.stocks.push(stock);
+}
 initializeCompanies();
 document.getElementById('stockModal').classList.remove('active');
 renderAdminDashboard();
+} else {
+alert('Failed to save stock');
+}
 }
 
-function deleteStock(index){
-if(!confirm(`Delete stock ${systemState.stocks[index].symbol}?`)) return;
+async function deleteStock(index){
+if(!confirm(Delete stock ${systemState.stocks[index].symbol}?)) return;
+const symbol = systemState.stocks[index].symbol;
+await deleteStockFromDB(symbol);
 systemState.stocks.splice(index, 1);
-saveSystemState();
 initializeCompanies();
 renderAdminDashboard();
 }
@@ -749,7 +1061,7 @@ const div = document.createElement("div");
 div.className = "card";
 div.dataset.symbol = c.symbol;
 
-const prev = c.history[c.history.length-2] ?? c.price - c.change;
+const prev = c.history[c.history.length-2] ?? c.price;
 const pct = prev ? ((c.price - prev)/ (prev) * 100) : 0;
 
 div.innerHTML = `
@@ -764,7 +1076,7 @@ div.innerHTML = `
 <div class="price">${formatINR(c.price)}</div>
 
 <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
-<div class="small" style="color:${c.change>=0? 'var(--green)':'var(--red)'};font-weight:600">
+<div class="${c.change >=0 ? 'small' : 'small'}" style="color:${c.change>=0? 'var(--green)':'var(--red)'};font-weight:600">
 ${c.change>=0?'+':''}${c.change.toFixed(2)} (${pct.toFixed(2)}%)
 </div>
 <div style="margin-left:auto" class="spark">
@@ -790,9 +1102,9 @@ drawSpark(canvas, c.history);
 
 function renderInvestments(){
 investListEl.innerHTML = "";
-if(!currentUser || !currentUser.data || !Array.isArray(currentUser.data.investments) || currentUser.data.investments.length === 0){
-investListEl.innerHTML = '<div class="muted small" style="margin-top:8px">No holdings yet.</div>';
-portfolioEl.textContent = formatINR(currentUser.data ? currentUser.data.cash : 0);
+if(currentUser.data.investments.length === 0){
+investListEl.innerHTML = <div class="muted small" style="margin-top:8px">No holdings yet.</div>;
+portfolioEl.textContent = formatINR(currentUser.data.cash);
 return;
 }
 
@@ -828,7 +1140,7 @@ investListEl.appendChild(item);
 holdingsValue += live * inv.qty;
 });
 
-const portfolioValue = (currentUser.data ? currentUser.data.cash : 0) + holdingsValue;
+const portfolioValue = currentUser.data.cash + holdingsValue;
 portfolioEl.textContent = formatINR(portfolioValue);
 }
 
@@ -844,7 +1156,6 @@ Charts
 ------------------------- */
 
 function drawSpark(canvas, history){
-if(!canvas) return;
 const ctx = canvas.getContext('2d');
 canvas.width = 160;
 canvas.height = 60;
@@ -869,15 +1180,11 @@ ctx.stroke();
 function openExpanded(symbol){
 expandedSymbolSelected = symbol;
 const c = systemState.companies.find(x=>x.symbol===symbol);
-if(!c) return;
 expandedSymbol.textContent = c.symbol;
 expandedName.textContent = c.name;
 expandedPrice.textContent = formatINR(c.price);
-// compute previous price and percent change safely
-const prevPrice = c.history[c.history.length-2] ?? (c.price - c.change);
-const pct = prevPrice ? (c.change / prevPrice * 100) : 0;
-expandedChange.textContent = `${c.change>=0?'+':''}${c.change.toFixed(2)} (${pct.toFixed(2)}%)`;
-expandedVol.textContent = `Vol ${c.volume.toLocaleString()}`;
+expandedChange.textContent = ${c.change>=0?'+':''}${c.change.toFixed(2)} (${(((c.change)/(c.price - c.change))*100)||0 .toFixed(2)}%);
+expandedVol.textContent = Vol ${c.volume.toLocaleString()};
 expandedArea.style.display = "block";
 
 buyQtyInput.value = 10;
@@ -929,16 +1236,17 @@ plugins: { legend: { display: false } }
 Market tick
 ------------------------- */
 
-function marketTick(){
-systemState.companies = systemState.companies.map(c=>{
-const volatility = 0.04;
-const pct = (Math.random()*2 - 1)*volatility;
-const newPrice = Math.max(0.01, c.price * (1 + pct));
-const change = newPrice - c.price;
-const newHistory = [...c.history.slice(1), Number(newPrice.toFixed(2))];
-const newVolume = c.volume + Math.floor(randBetween(100,20000));
-return {...c, price: Number(newPrice.toFixed(2)), change: Number(change.toFixed(2)), history: newHistory, volume: newVolume};
-});
+async function marketTick(){
+// Only ONE user updates prices (to avoid conflicts)
+// You can make admin the price updater, or use a random chance
+const shouldUpdatePrices = Math.random() < 0.1; // 10% chance this user updates
+
+if(shouldUpdatePrices) {
+await updateStockPrices();
+} else {
+// Fetch latest prices from Supabase
+await fetchCurrentPrices();
+}
 
 renderHeader();
 renderCards();
@@ -948,7 +1256,23 @@ if(expandedSymbolSelected){
 const c = systemState.companies.find(x=>x.symbol===expandedSymbolSelected);
 if(c){
 expandedPrice.textContent = formatINR(c.price);
-expandedVol.textContent = `Vol ${c.volume.toLocaleString()}`;
+expandedVol.textContent = Vol ${c.volume.toLocaleString()};
+drawExpandedChart(c.history, c.name);
+} else {
+collapseExpanded();
+}
+}
+}
+
+renderHeader();
+renderCards();
+renderInvestments();
+
+if(expandedSymbolSelected){
+const c = systemState.companies.find(x=>x.symbol===expandedSymbolSelected);
+if(c){
+expandedPrice.textContent = formatINR(c.price);
+expandedVol.textContent = Vol ${c.volume.toLocaleString()};
 drawExpandedChart(c.history, c.name);
 } else {
 collapseExpanded();
@@ -960,12 +1284,18 @@ collapseExpanded();
 Buy / Sell logic
 ------------------------- */
 
-function buyShares(symbol, qty){
+async function buyShares(symbol, qty){
 if(!qty || qty<=0){ alert("Enter valid quantity"); return; }
 const company = systemState.companies.find(c=>c.symbol===symbol);
 if(!company) return;
 const cost = company.price * qty;
 if(cost > currentUser.data.cash){ alert("Not enough cash"); return; }
+
+// Show confirmation
+if(!showBuyConfirmation(symbol, qty, company.price, cost)) {
+return;
+}
+
 currentUser.data.cash -= cost;
 
 const existing = currentUser.data.investments.find(i=>i.symbol===symbol && i.buyPrice===company.price);
@@ -975,41 +1305,57 @@ existing.qty += qty;
 currentUser.data.investments.push({ symbol, qty, buyPrice: company.price, buyTime: Date.now() });
 }
 
-syncParticipantData();
+await syncParticipantData();
 renderHeader();
 renderInvestments();
-alert(`Bought ${qty} ${symbol} @ ${formatINR(company.price)} — cost ${formatINR(cost)}`);
+alert(✓ Purchase Successful!\n\nBought ${qty} shares of ${symbol}\nAmount Debited: ${formatINR(cost)}\nRemaining Balance: ${formatINR(currentUser.data.cash)});
 }
 
-function sellShares(symbol, qty){
+async function sellShares(symbol, qty){
 if(!qty || qty<=0){ alert("Enter valid quantity"); return; }
 let remaining = qty;
 let totalProceeds = 0;
 
+// Calculate first
+const livePrice = systemState.companies.find(c=>c.symbol===symbol)?.price;
+if(!livePrice) { alert("Stock not found"); return; }
+
+let canSell = 0;
+for(let i = 0; i < currentUser.data.investments.length; i++){
+const inv = currentUser.data.investments[i];
+if(inv.symbol === symbol) canSell += inv.qty;
+}
+
+if(canSell < qty){
+alert("You don't hold that many shares to sell.");
+return;
+}
+
+totalProceeds = livePrice * qty;
+
+// Show confirmation
+if(!showSellConfirmation(symbol, qty, livePrice, totalProceeds)) {
+return;
+}
+
+// Now execute the sale
 for(let i = currentUser.data.investments.length-1; i>=0 && remaining>0; i--){
 const inv = currentUser.data.investments[i];
 if(inv.symbol !== symbol) continue;
 const sellQty = Math.min(inv.qty, remaining);
-const livePrice = (systemState.companies.find(c=>c.symbol===symbol)?.price) || inv.buyPrice;
-totalProceeds += sellQty * livePrice;
 inv.qty -= sellQty;
 remaining -= sellQty;
 if(inv.qty === 0) currentUser.data.investments.splice(i,1);
 }
 
-if(remaining>0){
-alert("You don't hold that many shares to sell.");
-return;
-}
-
 currentUser.data.cash += totalProceeds;
-syncParticipantData();
+await syncParticipantData();
 renderHeader();
 renderInvestments();
-alert(`Sold ${qty} ${symbol} for ${formatINR(totalProceeds)}.`);
+alert(✓ Sale Successful!\n\nSold ${qty} shares of ${symbol}\nAmount Credited: ${formatINR(totalProceeds)}\nNew Balance: ${formatINR(currentUser.data.cash)});
 }
 
-function sellInvestment(index){
+async function sellInvestment(index){
 const inv = currentUser.data.investments[index];
 if(!inv) return;
 const company = systemState.companies.find(c=>c.symbol===inv.symbol);
@@ -1017,30 +1363,62 @@ const live = company ? company.price : inv.buyPrice;
 const proceeds = live * inv.qty;
 const profitLoss = proceeds - (inv.buyPrice * inv.qty);
 
-currentUser.data.investments.splice(index,1);
-currentUser.data.cash += proceeds;
-syncParticipantData();
-renderHeader();
-renderInvestments();
-alert(`${profitLoss>=0 ? 'Profit' : 'Loss'}: ${formatINR(profitLoss)} on ${inv.symbol}`);
+// Show confirmation
+if(!showSellConfirmation(inv.symbol, inv.qty, live, proceeds)) {
+return;
 }
 
-function syncParticipantData(){
+currentUser.data.investments.splice(index,1);
+currentUser.data.cash += proceeds;
+await syncParticipantData();
+renderHeader();
+renderInvestments();
+alert(✓ Sale Successful!\n\n${profitLoss>=0 ? '💰 Profit' : '📉 Loss'}: ${formatINR(Math.abs(profitLoss))}\nAmount Credited: ${formatINR(proceeds)}\nNew Balance: ${formatINR(currentUser.data.cash)});
+}
+
+async function syncParticipantData(){
 const pIndex = systemState.participants.findIndex(p => p.username === currentUser.username);
 if(pIndex !== -1){
-// keep the stored participant object structure in sync
-systemState.participants[pIndex] = {...currentUser.data};
-saveSystemState();
+systemState.participants[pIndex] = currentUser.data;
+await saveParticipant(currentUser.data);
 }
+}
+
+/* -------------------------
+Confirmation Dialogs
+------------------------- */
+
+function showBuyConfirmation(symbol, qty, price, totalCost) {
+return confirm(
+CONFIRM PURCHASE\n\n +
+Stock: ${symbol}\n +
+Quantity: ${qty} shares\n +
+Price per share: ${formatINR(price)}\n +
+Total Amount: ${formatINR(totalCost)}\n\n +
+${formatINR(totalCost)} will be deducted from your account.\n\n +
+Do you want to proceed?
+);
+}
+
+function showSellConfirmation(symbol, qty, livePrice, totalProceeds) {
+return confirm(
+CONFIRM SALE\n\n +
+Stock: ${symbol}\n +
+Quantity: ${qty} shares\n +
+Price per share: ${formatINR(livePrice)}\n +
+Total Amount: ${formatINR(totalProceeds)}\n\n +
+${formatINR(totalProceeds)} will be deposited to your account.\n\n +
+Do you want to proceed?
+);
 }
 
 /* -------------------------
 Controls
 ------------------------- */
 
-intervalSelect.addEventListener('change', (e)=>{
+intervalSelect.addEventListener('change', async (e)=>{
 systemState.intervalMs = Number(e.target.value);
-saveSystemState();
+await saveSystemConfig();
 restartTicker();
 });
 
@@ -1071,10 +1449,10 @@ function restartTicker(){ startTicker(); }
 Event Handlers
 ------------------------- */
 
-document.getElementById('loginBtn').addEventListener('click', ()=>{
+document.getElementById('loginBtn').addEventListener('click', async ()=>{
 const username = document.getElementById('loginUsername').value.trim();
 const password = document.getElementById('loginPassword').value;
-const result = login(username, password);
+const result = await login(username, password);
 const errorEl = document.getElementById('loginError');
 
 if(result === true){
@@ -1092,17 +1470,30 @@ errorEl.style.display = 'block';
 document.getElementById('logoutBtn').addEventListener('click', logout);
 document.getElementById('logoutBtnParticipant').addEventListener('click', logout);
 
-document.getElementById('startMarketBtn').addEventListener('click', startMarket);
-document.getElementById('stopMarketBtn').addEventListener('click', stopMarket);
+document.getElementById('startMarketBtn').addEventListener('click', async ()=>{
+await startMarket();
+});
+
+document.getElementById('stopMarketBtn').addEventListener('click', async ()=>{
+await stopMarket();
+});
 
 document.getElementById('addParticipantBtn').addEventListener('click', addParticipant);
-document.getElementById('saveParticipantBtn').addEventListener('click', saveParticipant);
+
+document.getElementById('saveParticipantBtn').addEventListener('click', async ()=>{
+await saveParticipantHandler();
+});
+
 document.getElementById('cancelParticipantBtn').addEventListener('click', ()=>{
 document.getElementById('participantModal').classList.remove('active');
 });
 
 document.getElementById('addStockBtn').addEventListener('click', addStock);
-document.getElementById('saveStockBtn').addEventListener('click', saveStock);
+
+document.getElementById('saveStockBtn').addEventListener('click', async ()=>{
+await saveStockHandler();
+});
+
 document.getElementById('cancelStockBtn').addEventListener('click', ()=>{
 document.getElementById('stockModal').classList.remove('active');
 });
@@ -1117,8 +1508,8 @@ window.deleteStock = deleteStock;
 Initialize
 ------------------------- */
 
-function init(){
-loadSystemState();
+async function init(){
+await loadSystemState();
 showLoginScreen();
 }
 
