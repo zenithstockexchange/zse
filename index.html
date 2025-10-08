@@ -1103,7 +1103,7 @@ drawSpark(canvas, c.history);
 function renderInvestments(){
 investListEl.innerHTML = "";
 if(currentUser.data.investments.length === 0){
-investListEl.innerHTML = <div class="muted small" style="margin-top:8px">No holdings yet.</div>;
+investListEl.innerHTML = '<div class="muted small" style="margin-top:8px">No holdings yet.</div>';
 portfolioEl.textContent = formatINR(currentUser.data.cash);
 return;
 }
@@ -1519,6 +1519,7 @@ init();
 </script>
 </body>
 </html>
+
 
 
 
