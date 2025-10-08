@@ -384,8 +384,10 @@ running: true,
 let currentUser = null;
 let editingParticipantIndex = null;
 let editingStockIndex = null;
-let tickerHandle = null;  // ← ADD THIS HERE
+let tickerHandle = null;
 let adminRefreshHandle = null;
+let participantRefreshHandle = null;
+let loginStatusCheckHandle = null;
 
 function randBetween(min,max){ return Math.random()*(max-min)+min }
 function formatINR(n){ return "Ƶ" + Number(n).toLocaleString('en-IN', {maximumFractionDigits:2, minimumFractionDigits:2}) }
@@ -640,9 +642,9 @@ function showParticipantView(){
 document.getElementById('adminPanel').style.display = 'none';
 document.getElementById('participantView').style.display = 'block';
 document.getElementById('currentUser').textContent = currentUser.username;
-startParticipantRefresh();
 renderParticipantView();
 startTicker();
+startParticipantRefresh();
 }
 
 /* -------------------------
@@ -1620,6 +1622,7 @@ init();
 </script>
 </body>
 </html>
+
 
 
 
