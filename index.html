@@ -1308,7 +1308,7 @@ currentUser.data.investments.push({ symbol, qty, buyPrice: company.price, buyTim
 await syncParticipantData();
 renderHeader();
 renderInvestments();
-alert(✓ Purchase Successful!\n\nBought ${qty} shares of ${symbol}\nAmount Debited: ${formatINR(cost)}\nRemaining Balance: ${formatINR(currentUser.data.cash)});
+alert("✓ Purchase Successful!\n\nBought " + qty + " shares of " + symbol + "\nAmount Debited: " + formatINR(cost) + "\nRemaining Balance: " + formatINR(currentUser.data.cash));
 }
 
 async function sellShares(symbol, qty){
@@ -1352,7 +1352,7 @@ currentUser.data.cash += totalProceeds;
 await syncParticipantData();
 renderHeader();
 renderInvestments();
-alert(✓ Sale Successful!\n\nSold ${qty} shares of ${symbol}\nAmount Credited: ${formatINR(totalProceeds)}\nNew Balance: ${formatINR(currentUser.data.cash)});
+alert("✓ Sale Successful!\n\nSold " + qty + " shares of " + symbol + "\nAmount Credited: " + formatINR(totalProceeds) + "\nNew Balance: " + formatINR(currentUser.data.cash));
 }
 
 async function sellInvestment(index){
@@ -1373,7 +1373,7 @@ currentUser.data.cash += proceeds;
 await syncParticipantData();
 renderHeader();
 renderInvestments();
-alert(✓ Sale Successful!\n\n${profitLoss>=0 ? '💰 Profit' : '📉 Loss'}: ${formatINR(Math.abs(profitLoss))}\nAmount Credited: ${formatINR(proceeds)}\nNew Balance: ${formatINR(currentUser.data.cash)});
+alert("✓ Sale Successful!\n\n" + (profitLoss>=0 ? '💰 Profit' : '📉 Loss') + ": " + formatINR(Math.abs(profitLoss)) + "\nAmount Credited: " + formatINR(proceeds) + "\nNew Balance: " + formatINR(currentUser.data.cash));
 }
 
 async function syncParticipantData(){
@@ -1519,4 +1519,5 @@ init();
 </script>
 </body>
 </html>
+
 
