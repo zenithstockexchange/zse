@@ -233,7 +233,7 @@ header{flex-direction:column;align-items:flex-start;gap:8px}
 
 <label class="small muted" style="margin-left:10px">Update</label>
 <select id="intervalSelect" title="Update interval">
-<option value="30000">30 Seconds</option>
+<option value="10000">10 Seconds</option>
 </select>
 
 <button class="ghost" id="logoutBtnParticipant" style="margin-left:6px">Logout</button>
@@ -369,7 +369,7 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 System Configuration & Auth
 ------------------------- */
 
-const ADMIN_DEFAULT = {username: "admin", password: "admin123", role: "admin"};
+const ADMIN_DEFAULT = {username: "ZSE", password: "ZAHEER", role: "admin"};
 
 let systemState = {
 marketRunning: true,
@@ -1498,5 +1498,6 @@ init();
 </script>
 </body>
 </html>
+
 
 
