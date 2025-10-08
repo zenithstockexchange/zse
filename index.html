@@ -602,6 +602,7 @@ return false;
 function logout(){
 currentUser = null;
 stopAdminRefresh();
+stopParticipantRefresh();
 showLoginScreen();
 }
 
@@ -639,6 +640,7 @@ function showParticipantView(){
 document.getElementById('adminPanel').style.display = 'none';
 document.getElementById('participantView').style.display = 'block';
 document.getElementById('currentUser').textContent = currentUser.username;
+startParticipantRefresh();
 renderParticipantView();
 startTicker();
 }
@@ -683,6 +685,108 @@ clearInterval(adminRefreshHandle);
 adminRefreshHandle = null; 
 }
 }
+
+/* -------------------------
+Participant Auto-Refresh & Login Status Check
+------------------------- */
+
+async function refreshParticipantData(){
+if(currentUser && currentUser.role === 'participant'){
+// Fetch latest participant data from Supabase
+const { data: participant, error } = await supabase
+.from('participants')
+.select('*')
+.eq('username', currentUser.username)
+.single();
+
+if (!error && participant) {
+// Update current user data
+currentUser.data = {
+username: participant.username,
+password: participant.password,
+cash: Number(participant.cash),
+investments: participant.investments || []
+};
+
+// Update in systemState as well
+const pIndex = systemState.participants.findIndex(p => p.username === currentUser.username);
+if(pIndex !== -1){
+systemState.participants[pIndex] = currentUser.data;
+}
+
+// Re-render with fresh data
+renderHeader();
+renderInvestments();
+}
+}
+}
+
+async function checkLoginStatus(){
+if(currentUser && currentUser.role === 'participant'){
+// Check if market is still running
+const { data: config, error } = await supabase
+.from('system_config')
+.select('market_running')
+.eq('id', 1)
+.single();
+
+if (!error && config) {
+if(!config.market_running){
+// Market stopped, logout user
+alert('Market has been stopped by admin. You will be logged out.');
+logout();
+return;
+}
+}
+
+// Check if participant still exists and credentials are valid
+const { data: participant, error: pError } = await supabase
+.from('participants')
+.select('*')
+.eq('username', currentUser.username)
+.single();
+
+if (pError || !participant) {
+// Participant deleted
+alert('Your account has been removed by admin. You will be logged out.');
+logout();
+return;
+}
+
+// Verify password hasn't changed
+if(participant.password !== currentUser.data.password){
+alert('Your account credentials have been changed by admin. You will be logged out.');
+logout();
+return;
+}
+}
+}
+
+function startParticipantRefresh(){
+stopParticipantRefresh();
+// Refresh participant data every 2 seconds
+participantRefreshHandle = setInterval(()=> {
+refreshParticipantData();
+}, 2000);
+
+// Check login status every 3 seconds
+loginStatusCheckHandle = setInterval(()=> {
+checkLoginStatus();
+}, 3000);
+}
+
+function stopParticipantRefresh(){
+if(participantRefreshHandle) { 
+clearInterval(participantRefreshHandle); 
+participantRefreshHandle = null; 
+}
+if(loginStatusCheckHandle) { 
+clearInterval(loginStatusCheckHandle); 
+loginStatusCheckHandle = null; 
+}
+}
+
+  
 /* -------------------------
 Admin Dashboard
 ------------------------- */
@@ -1516,6 +1620,7 @@ init();
 </script>
 </body>
 </html>
+
 
 
 
