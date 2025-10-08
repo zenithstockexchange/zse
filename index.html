@@ -698,15 +698,31 @@ statusEl.textContent = 'Stopped';
 statusEl.className = 'market-status stopped';
 }
 
-// Participants with detailed portfolio
+// Participants with detailed portfolio - SORTED BY PORTFOLIO VALUE
 const participantList = document.getElementById('participantList');
 participantList.innerHTML = '';
 if(systemState.participants.length === 0){
 participantList.innerHTML = '<div class="muted small">No participants yet.</div>';
 } else {
-systemState.participants.forEach((p, idx) => {
-// Calculate portfolio value
+// Calculate portfolio values and sort
+const participantsWithPortfolio = systemState.participants.map((p, idx) => {
 let holdingsValue = 0;
+if(p.investments && p.investments.length > 0) {
+p.investments.forEach(inv => {
+const currentStock = systemState.companies.find(c => c.symbol === inv.symbol);
+const currentPrice = currentStock ? currentStock.price : inv.buyPrice;
+holdingsValue += currentPrice * inv.qty;
+});
+}
+const totalPortfolio = Number(p.cash) + holdingsValue;
+return { participant: p, originalIndex: idx, totalPortfolio, holdingsValue };
+});
+
+// Sort by portfolio value in descending order (highest first)
+participantsWithPortfolio.sort((a, b) => b.totalPortfolio - a.totalPortfolio);
+
+// Render sorted participants
+participantsWithPortfolio.forEach(({ participant: p, originalIndex: idx, totalPortfolio, holdingsValue }) => {
 let holdingsHTML = '';
 
 if(p.investments && p.investments.length > 0) {
@@ -716,8 +732,6 @@ const currentPrice = currentStock ? currentStock.price : inv.buyPrice;
 const investmentValue = currentPrice * inv.qty;
 const profitLoss = (currentPrice - inv.buyPrice) * inv.qty;
 const profitLossPercent = ((currentPrice - inv.buyPrice) / inv.buyPrice) * 100;
-
-holdingsValue += investmentValue;
 
 const plColor = profitLoss >= 0 ? '#16a34a' : '#ef4444';
 holdingsHTML += `
@@ -738,7 +752,6 @@ ${profitLoss >= 0 ? '+' : ''}${formatINR(profitLoss)} (${profitLoss >= 0 ? '+' :
 holdingsHTML = '<div class="small muted" style="padding:4px 0">No holdings</div>';
 }
 
-const totalPortfolio = Number(p.cash) + holdingsValue;
 const totalInvested = p.investments.reduce((acc, inv) => acc + (inv.buyPrice * inv.qty), 0);
 const overallPL = holdingsValue - totalInvested;
 const overallPLColor = overallPL >= 0 ? '#16a34a' : '#ef4444';
@@ -1234,10 +1247,9 @@ Market tick
 ------------------------- */
 
 async function marketTick(){
-// Only ONE user updates prices (to avoid conflicts)
-// You can make admin the price updater, or use a random chance
-const shouldUpdatePrices = Math.random() < 0.1; // 10% chance this user updates
-
+// Always update prices with 20% chance from any user
+// This keeps market moving even without admin
+const shouldUpdatePrices = Math.random() < 0.2; // 20% chance any user updates
 if(shouldUpdatePrices) {
 await updateStockPrices();
 } else {
@@ -1245,6 +1257,9 @@ await updateStockPrices();
 await fetchCurrentPrices();
 }
 
+// Update UI based on current user role
+if(currentUser) {
+if(currentUser.role === 'participant') {
 renderHeader();
 renderCards();
 renderInvestments();
@@ -1258,6 +1273,9 @@ drawExpandedChart(c.history, c.name);
 } else {
 collapseExpanded();
 }
+}
+}
+// Admin has its own refresh cycle via startAdminRefresh()
 }
 }
 
@@ -1498,6 +1516,7 @@ init();
 </script>
 </body>
 </html>
+
 
 
 
