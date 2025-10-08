@@ -945,7 +945,7 @@ alert('Failed to save participant');
 }
 
 async function deleteParticipant(index){
-if(!confirm(Delete participant ${systemState.participants[index].username}?)) return;
+if(!confirm("Delete participant " + systemState.participants[index].username + "?")) return;
 const username = systemState.participants[index].username;
 await deleteParticipantFromDB(username);
 systemState.participants.splice(index, 1);
@@ -1012,7 +1012,7 @@ alert('Failed to save stock');
 }
 
 async function deleteStock(index){
-if(!confirm(Delete stock ${systemState.stocks[index].symbol}?)) return;
+if(!confirm("Delete stock " + systemState.stocks[index].symbol + "?")) return;
 const symbol = systemState.stocks[index].symbol;
 await deleteStockFromDB(symbol);
 systemState.stocks.splice(index, 1);
@@ -1519,5 +1519,6 @@ init();
 </script>
 </body>
 </html>
+
 
 
