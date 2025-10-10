@@ -614,9 +614,9 @@ await supabase
 
 async function updateStockPrices() {
 systemState.companies = systemState.companies.map(c => {
-const volatility = 0.04;
+const volatility = 0.0001;
 const pct = (Math.random() * 2 - 1) * volatility;
-const newPrice = Math.max(0.01, c.price * (1 + pct));
+const newPrice = Math.max(15, c.price * (1 + pct));
 const change = newPrice - c.price;
 const newHistory = [...c.history.slice(1), Number(newPrice.toFixed(2))];
 const newVolume = c.volume + Math.floor(randBetween(100, 20000));
@@ -1502,7 +1502,7 @@ Market tick
 ------------------------- */
 
 async function marketTick(){
-const shouldUpdatePrices = Math.random() < 0.2;
+const shouldUpdatePrices = Math.random() < 0.5;
 if(shouldUpdatePrices) {
 await updateStockPrices();
 } else {
@@ -1788,3 +1788,4 @@ init();
 </script>
 </body>
 </html>
+
