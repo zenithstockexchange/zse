@@ -135,6 +135,62 @@ overflow-y:auto;
 }
 .modal-content h3{margin:0 0 16px 0}
 
+.toggle-switch {
+position: relative;
+display: inline-block;
+width: 50px;
+height: 24px;
+}
+
+.toggle-switch input {
+opacity: 0;
+width: 0;
+height: 0;
+}
+
+.slider {
+position: absolute;
+cursor: pointer;
+top: 0;
+left: 0;
+right: 0;
+bottom: 0;
+background-color: #ccc;
+transition: .4s;
+border-radius: 24px;
+}
+
+.slider:before {
+position: absolute;
+content: "";
+height: 18px;
+width: 18px;
+left: 3px;
+bottom: 3px;
+background-color: white;
+transition: .4s;
+border-radius: 50%;
+}
+
+input:checked + .slider {
+background-color: #16a34a;
+}
+
+input:checked + .slider:before {
+transform: translateX(26px);
+}
+
+.special-access-badge{
+display:inline-block;
+background:#fef3c7;
+color:#92400e;
+padding:2px 8px;
+border-radius:4px;
+font-size:11px;
+font-weight:600;
+margin-left:8px;
+}
+
 footer{text-align:center;margin-top:20px;color:#94a3b8;font-size:13px}
 
 /* small responsive */
@@ -180,10 +236,38 @@ header{flex-direction:column;align-items:flex-start;gap:8px}
 <!-- Market Control -->
 <div class="admin-section">
 <h3>Market Control</h3>
-<div style="display:flex;gap:12px;align-items:center">
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
 <span class="market-status" id="marketStatus">Running</span>
 <button class="success" id="startMarketBtn">Start Market</button>
 <button class="danger" id="stopMarketBtn">Stop Market</button>
+</div>
+</div>
+
+<!-- System Settings -->
+<div class="admin-section">
+<h3>System Settings</h3>
+<div style="background:#f8fafc;padding:16px;border-radius:8px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<div>
+<div style="font-weight:600;margin-bottom:4px">Update Interval</div>
+<div class="small muted">How often prices update for all users</div>
+</div>
+<select id="adminIntervalSelect" style="width:120px">
+<option value="1000">1 Second</option>
+<option value="5000">5 Seconds</option>
+<option value="10000">10 Seconds</option>
+</select>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center">
+<div>
+<div style="font-weight:600;margin-bottom:4px">Trading Buffer</div>
+<div class="small muted">30-second wait between buy and sell</div>
+</div>
+<label class="toggle-switch">
+<input type="checkbox" id="tradingBufferToggle">
+<span class="slider"></span>
+</label>
+</div>
 </div>
 </div>
 
@@ -231,11 +315,6 @@ header{flex-direction:column;align-items:flex-start;gap:8px}
 <div id="cash" style="font-weight:700">₹0</div>
 </div>
 
-<label class="small muted" style="margin-left:10px">Update</label>
-<select id="intervalSelect" title="Update interval">
-<option value="10000">10 Seconds</option>
-</select>
-
 <button class="ghost" id="logoutBtnParticipant" style="margin-left:6px">Logout</button>
 </div>
 </header>
@@ -282,6 +361,9 @@ header{flex-direction:column;align-items:flex-start;gap:8px}
 <span id="expandedVol">Vol 0</span>
 </div>
 </div>
+<div id="bufferWarning" style="display:none;margin-top:8px;padding:8px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e">
+⏳ <span id="bufferCountdown">30</span>s wait before selling
+</div>
 </div>
 </div>
 </section>
@@ -322,6 +404,16 @@ Built for demo — not financial advice.
 <div class="form-group">
 <label>Starting Balance (₹)</label>
 <input type="number" id="modalParticipantBalance" value="1000000" />
+</div>
+<div class="form-group" style="display:flex;justify-content:space-between;align-items:center">
+<div>
+<label style="margin-bottom:0">Special Access (Trade when market stopped)</label>
+<div class="small muted">Allow trading even when market is stopped</div>
+</div>
+<label class="toggle-switch">
+<input type="checkbox" id="modalParticipantSpecialAccess">
+<span class="slider"></span>
+</label>
 </div>
 <div style="display:flex;gap:8px;justify-content:flex-end">
 <button class="ghost" id="cancelParticipantBtn">Cancel</button>
@@ -377,8 +469,10 @@ admin: ADMIN_DEFAULT,
 participants: [],
 stocks: [],
 companies: [],
-intervalMs: 5000,
+intervalMs: 1000, // Changed default to 1 second
 running: true,
+tradingBufferEnabled: true, // New: trading buffer toggle
+tradingBufferSeconds: 30 // New: buffer duration
 };
 
 let currentUser = null;
@@ -388,9 +482,13 @@ let tickerHandle = null;
 let adminRefreshHandle = null;
 let participantRefreshHandle = null;
 let loginStatusCheckHandle = null;
+let bufferCountdownHandle = null;
+
+// Track last buy time for buffer
+let lastBuyTimes = {}; // symbol -> timestamp
 
 function randBetween(min,max){ return Math.random()*(max-min)+min }
-function formatINR(n){ return "Ƶ" + Number(n).toLocaleString('en-IN', {maximumFractionDigits:2, minimumFractionDigits:2}) }
+function formatINR(n){ return "₹" + Number(n).toLocaleString('en-IN', {maximumFractionDigits:2, minimumFractionDigits:2}) }
 
 /* -------------------------
 Supabase Functions
@@ -407,7 +505,8 @@ const { data: config, error: configError } = await supabase
 
 if (!configError && config) {
 systemState.marketRunning = config.market_running;
-systemState.intervalMs = config.interval_ms;
+systemState.intervalMs = config.interval_ms || 1000;
+systemState.tradingBufferEnabled = config.trading_buffer_enabled !== undefined ? config.trading_buffer_enabled : true;
 }
 
 // Load participants
@@ -420,7 +519,8 @@ systemState.participants = participants.map(p => ({
 username: p.username,
 password: p.password,
 cash: Number(p.cash),
-investments: p.investments || []
+investments: p.investments || [],
+specialAccess: p.special_access || false
 }));
 }
 
@@ -463,7 +563,8 @@ await supabase
 .from('system_config')
 .update({ 
 market_running: systemState.marketRunning,
-interval_ms: systemState.intervalMs 
+interval_ms: systemState.intervalMs,
+trading_buffer_enabled: systemState.tradingBufferEnabled
 })
 .eq('id', 1);
 }
@@ -475,7 +576,8 @@ const { data, error } = await supabase
 username: participant.username,
 password: participant.password,
 cash: participant.cash,
-investments: participant.investments
+investments: participant.investments,
+special_access: participant.specialAccess || false
 }, { onConflict: 'username' })
 .select();
 
@@ -496,7 +598,7 @@ const { data, error } = await supabase
 symbol: stock.symbol,
 name: stock.name,
 price: stock.price,
-current_price: stock.price  // ← Add this line
+current_price: stock.price
 }, { onConflict: 'symbol' })
 .select();
 
@@ -511,7 +613,6 @@ await supabase
 }
 
 async function updateStockPrices() {
-// Update prices in systemState.companies (simulated market movement)
 systemState.companies = systemState.companies.map(c => {
 const volatility = 0.04;
 const pct = (Math.random() * 2 - 1) * volatility;
@@ -528,13 +629,11 @@ volume: newVolume
 };
 });
 
-// Save ALL updated prices to Supabase
 const updates = systemState.companies.map(c => ({
 symbol: c.symbol,
 current_price: c.price
 }));
 
-// Batch update to Supabase
 for (const update of updates) {
 await supabase
 .from('stocks')
@@ -544,13 +643,11 @@ await supabase
 }
 
 async function fetchCurrentPrices() {
-// Fetch current prices from Supabase
 const { data: stocks, error } = await supabase
 .from('stocks')
 .select('symbol, current_price');
 
 if (!error && stocks) {
-// Update local companies with Supabase prices
 stocks.forEach(stock => {
 const company = systemState.companies.find(c => c.symbol === stock.symbol);
 if (company && stock.current_price) {
@@ -558,14 +655,11 @@ const oldPrice = company.price;
 const newPrice = Number(stock.current_price);
 company.price = newPrice;
 company.change = newPrice - oldPrice;
-// Update history
 company.history = [...company.history.slice(1), newPrice];
 }
 });
 }
 }
-
-
 
 async function initializeCompanies(){
 systemState.companies = systemState.stocks.map(s => ({
@@ -575,7 +669,6 @@ history: Array.from({length:12}, () => s.current_price || s.price),
 volume: Math.floor(randBetween(1000,50000))
 }));
 
-// Fetch current prices from Supabase
 await fetchCurrentPrices();
 }
 
@@ -592,7 +685,8 @@ return true;
 // Check participants
 const participant = systemState.participants.find(p => p.username === username && p.password === password);
 if(participant){
-if(!systemState.marketRunning){
+// Allow login if market is running OR user has special access
+if(!systemState.marketRunning && !participant.specialAccess){
 return "market_stopped";
 }
 currentUser = {username, role: "participant", data: participant};
@@ -605,6 +699,7 @@ function logout(){
 currentUser = null;
 stopAdminRefresh();
 stopParticipantRefresh();
+stopBufferCountdown();
 showLoginScreen();
 }
 
@@ -634,6 +729,8 @@ showParticipantView();
 function showAdminView(){
 document.getElementById('adminPanel').style.display = 'block';
 document.getElementById('participantView').style.display = 'none';
+document.getElementById('adminIntervalSelect').value = String(systemState.intervalMs);
+document.getElementById('tradingBufferToggle').checked = systemState.tradingBufferEnabled;
 renderAdminDashboard();
 startAdminRefresh();
 }
@@ -641,7 +738,8 @@ startAdminRefresh();
 function showParticipantView(){
 document.getElementById('adminPanel').style.display = 'none';
 document.getElementById('participantView').style.display = 'block';
-document.getElementById('currentUser').textContent = currentUser.username;
+const userDisplay = currentUser.username + (currentUser.data.specialAccess ? ' 🌟' : '');
+document.getElementById('currentUser').textContent = userDisplay;
 renderParticipantView();
 startTicker();
 startParticipantRefresh();
@@ -651,11 +749,8 @@ startParticipantRefresh();
 Admin Auto-Refresh
 ------------------------- */
 
-
-
 async function refreshAdminData(){
 if(currentUser && currentUser.role === 'admin'){
-// Fetch latest data from Supabase
 const { data: participants, error: participantsError } = await supabase
 .from('participants')
 .select('*');
@@ -665,11 +760,11 @@ systemState.participants = participants.map(p => ({
 username: p.username,
 password: p.password,
 cash: Number(p.cash),
-investments: p.investments || []
+investments: p.investments || [],
+specialAccess: p.special_access || false
 }));
 }
 
-// Re-render with fresh data
 renderAdminDashboard();
 }
 }
@@ -678,7 +773,7 @@ function startAdminRefresh(){
 stopAdminRefresh();
 adminRefreshHandle = setInterval(()=> {
 refreshAdminData();
-}, 3000); // Refresh every 3 seconds
+}, 3000);
 }
 
 function stopAdminRefresh(){
@@ -694,7 +789,6 @@ Participant Auto-Refresh & Login Status Check
 
 async function refreshParticipantData(){
 if(currentUser && currentUser.role === 'participant'){
-// Fetch latest participant data from Supabase
 const { data: participant, error } = await supabase
 .from('participants')
 .select('*')
@@ -702,21 +796,19 @@ const { data: participant, error } = await supabase
 .single();
 
 if (!error && participant) {
-// Update current user data
 currentUser.data = {
 username: participant.username,
 password: participant.password,
 cash: Number(participant.cash),
-investments: participant.investments || []
+investments: participant.investments || [],
+specialAccess: participant.special_access || false
 };
 
-// Update in systemState as well
 const pIndex = systemState.participants.findIndex(p => p.username === currentUser.username);
 if(pIndex !== -1){
 systemState.participants[pIndex] = currentUser.data;
 }
 
-// Re-render with fresh data
 renderHeader();
 renderInvestments();
 }
@@ -725,7 +817,6 @@ renderInvestments();
 
 async function checkLoginStatus(){
 if(currentUser && currentUser.role === 'participant'){
-// Check if market is still running
 const { data: config, error } = await supabase
 .from('system_config')
 .select('market_running')
@@ -733,15 +824,14 @@ const { data: config, error } = await supabase
 .single();
 
 if (!error && config) {
-if(!config.market_running){
-// Market stopped, logout user
+// Only logout if market stopped AND user doesn't have special access
+if(!config.market_running && !currentUser.data.specialAccess){
 alert('Market has been stopped by admin. You will be logged out.');
 logout();
 return;
 }
 }
 
-// Check if participant still exists and credentials are valid
 const { data: participant, error: pError } = await supabase
 .from('participants')
 .select('*')
@@ -749,13 +839,11 @@ const { data: participant, error: pError } = await supabase
 .single();
 
 if (pError || !participant) {
-// Participant deleted
 alert('Your account has been removed by admin. You will be logged out.');
 logout();
 return;
 }
 
-// Verify password hasn't changed
 if(participant.password !== currentUser.data.password){
 alert('Your account credentials have been changed by admin. You will be logged out.');
 logout();
@@ -766,12 +854,10 @@ return;
 
 function startParticipantRefresh(){
 stopParticipantRefresh();
-// Refresh participant data every 2 seconds
 participantRefreshHandle = setInterval(()=> {
 refreshParticipantData();
 }, 2000);
 
-// Check login status every 3 seconds
 loginStatusCheckHandle = setInterval(()=> {
 checkLoginStatus();
 }, 3000);
@@ -810,7 +896,6 @@ participantList.innerHTML = '';
 if(systemState.participants.length === 0){
 participantList.innerHTML = '<div class="muted small">No participants yet.</div>';
 } else {
-// Calculate portfolio values and sort
 const participantsWithPortfolio = systemState.participants.map((p, idx) => {
 let holdingsValue = 0;
 if(p.investments && p.investments.length > 0) {
@@ -824,10 +909,8 @@ const totalPortfolio = Number(p.cash) + holdingsValue;
 return { participant: p, originalIndex: idx, totalPortfolio, holdingsValue };
 });
 
-// Sort by portfolio value in descending order (highest first)
 participantsWithPortfolio.sort((a, b) => b.totalPortfolio - a.totalPortfolio);
 
-// Render sorted participants
 participantsWithPortfolio.forEach(({ participant: p, originalIndex: idx, totalPortfolio, holdingsValue }) => {
 let holdingsHTML = '';
 
@@ -869,7 +952,10 @@ div.style.alignItems = 'stretch';
 div.innerHTML = `
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
 <div>
-<div style="font-weight:600;font-size:16px">${p.username}</div>
+<div style="font-weight:600;font-size:16px">
+${p.username}
+${p.specialAccess ? '<span class="special-access-badge">SPECIAL ACCESS</span>' : ''}
+</div>
 <div class="small muted">Cash: ${formatINR(p.cash)} | Holdings: ${p.investments.length} stocks</div>
 </div>
 <div class="participant-actions">
@@ -910,14 +996,12 @@ participantList.appendChild(div);
 const stockList = document.getElementById('stockList');
 stockList.innerHTML = '';
 systemState.stocks.forEach((s, idx) => {
-// Find current live price
 const liveStock = systemState.companies.find(c => c.symbol === s.symbol);
 const currentPrice = liveStock ? liveStock.price : s.price;
 const priceChange = currentPrice - s.price;
 const priceChangePercent = ((currentPrice - s.price) / s.price) * 100;
 const changeColor = priceChange >= 0 ? '#16a34a' : '#ef4444';
 
-// Calculate total shares held by all participants
 let totalShares = 0;
 let totalInvested = 0;
 systemState.participants.forEach(p => {
@@ -990,7 +1074,7 @@ async function stopMarket(){
 systemState.marketRunning = false;
 await saveSystemConfig();
 renderAdminDashboard();
-alert('Market stopped! Participants cannot login or trade.');
+alert('Market stopped! Only participants with special access can trade.');
 }
 
 /* -------------------------
@@ -1003,6 +1087,7 @@ document.getElementById('participantModalTitle').textContent = 'Add Participant'
 document.getElementById('modalParticipantId').value = '';
 document.getElementById('modalParticipantPassword').value = '';
 document.getElementById('modalParticipantBalance').value = '1000000';
+document.getElementById('modalParticipantSpecialAccess').checked = false;
 document.getElementById('participantModal').classList.add('active');
 }
 
@@ -1013,6 +1098,7 @@ document.getElementById('participantModalTitle').textContent = 'Edit Participant
 document.getElementById('modalParticipantId').value = p.username;
 document.getElementById('modalParticipantPassword').value = p.password;
 document.getElementById('modalParticipantBalance').value = p.cash;
+document.getElementById('modalParticipantSpecialAccess').checked = p.specialAccess || false;
 document.getElementById('participantModal').classList.add('active');
 }
 
@@ -1020,6 +1106,7 @@ async function saveParticipantHandler(){
 const username = document.getElementById('modalParticipantId').value.trim();
 const password = document.getElementById('modalParticipantPassword').value;
 const cash = Number(document.getElementById('modalParticipantBalance').value);
+const specialAccess = document.getElementById('modalParticipantSpecialAccess').checked;
 
 if(!username || !password){
 alert('Username and password are required');
@@ -1031,7 +1118,6 @@ alert('Cannot use "admin" as participant username');
 return;
 }
 
-// Check duplicate username (except when editing same user)
 const duplicate = systemState.participants.find((p, idx) => 
 p.username === username && idx !== editingParticipantIndex
 );
@@ -1044,7 +1130,8 @@ const participant = {
 username,
 password,
 cash,
-investments: editingParticipantIndex !== null ? systemState.participants[editingParticipantIndex].investments : []
+investments: editingParticipantIndex !== null ? systemState.participants[editingParticipantIndex].investments : [],
+specialAccess
 };
 
 const success = await saveParticipant(participant);
@@ -1102,7 +1189,6 @@ alert('All fields are required and price must be positive');
 return;
 }
 
-// Check duplicate symbol (except when editing same stock)
 const duplicate = systemState.stocks.find((s, idx) => 
 s.symbol === symbol && idx !== editingStockIndex
 );
@@ -1156,7 +1242,6 @@ const buyQtyInput = document.getElementById("buyQty");
 const sellQtyInput = document.getElementById("sellQty");
 const buyBtn = document.getElementById("buyBtn");
 const sellBtn = document.getElementById("sellBtn");
-const intervalSelect = document.getElementById("intervalSelect");
 
 let expandedSymbolSelected = null;
 let expandedChart = null;
@@ -1261,7 +1346,6 @@ portfolioEl.textContent = formatINR(portfolioValue);
 }
 
 function renderParticipantView(){
-intervalSelect.value = String(systemState.intervalMs);
 renderHeader();
 renderCards();
 renderInvestments();
@@ -1310,12 +1394,16 @@ drawExpandedChart(c.history, c.name);
 
 buyBtn.onclick = ()=> buyShares(symbol, Number(buyQtyInput.value||0));
 sellBtn.onclick = ()=> sellShares(symbol, Number(sellQtyInput.value||0));
+
+// Update buffer warning
+updateBufferWarning(symbol);
 }
 
 function collapseExpanded(){
 expandedSymbolSelected = null;
 expandedArea.style.display = "none";
 if(expandedChart){ expandedChart.destroy(); expandedChart = null; }
+stopBufferCountdown();
 }
 
 function drawExpandedChart(history, label){
@@ -1349,21 +1437,78 @@ plugins: { legend: { display: false } }
 }
 
 /* -------------------------
+Trading Buffer Management
+------------------------- */
+
+function updateBufferWarning(symbol){
+if(!systemState.tradingBufferEnabled){
+document.getElementById('bufferWarning').style.display = 'none';
+return;
+}
+
+const lastBuyKey = currentUser.username + '_' + symbol;
+const lastBuyTime = lastBuyTimes[lastBuyKey];
+
+if(!lastBuyTime){
+document.getElementById('bufferWarning').style.display = 'none';
+return;
+}
+
+const elapsed = (Date.now() - lastBuyTime) / 1000;
+const remaining = systemState.tradingBufferSeconds - elapsed;
+
+if(remaining <= 0){
+document.getElementById('bufferWarning').style.display = 'none';
+delete lastBuyTimes[lastBuyKey];
+} else {
+document.getElementById('bufferWarning').style.display = 'block';
+document.getElementById('bufferCountdown').textContent = Math.ceil(remaining);
+startBufferCountdown(symbol);
+}
+}
+
+function startBufferCountdown(symbol){
+stopBufferCountdown();
+bufferCountdownHandle = setInterval(()=>{
+if(expandedSymbolSelected === symbol){
+updateBufferWarning(symbol);
+} else {
+stopBufferCountdown();
+}
+}, 1000);
+}
+
+function stopBufferCountdown(){
+if(bufferCountdownHandle){
+clearInterval(bufferCountdownHandle);
+bufferCountdownHandle = null;
+}
+}
+
+function canSellStock(symbol){
+if(!systemState.tradingBufferEnabled) return true;
+
+const lastBuyKey = currentUser.username + '_' + symbol;
+const lastBuyTime = lastBuyTimes[lastBuyKey];
+
+if(!lastBuyTime) return true;
+
+const elapsed = (Date.now() - lastBuyTime) / 1000;
+return elapsed >= systemState.tradingBufferSeconds;
+}
+
+/* -------------------------
 Market tick
 ------------------------- */
 
 async function marketTick(){
-// Always update prices with 20% chance from any user
-// This keeps market moving even without admin
-const shouldUpdatePrices = Math.random() < 0.2; // 20% chance any user updates
+const shouldUpdatePrices = Math.random() < 0.2;
 if(shouldUpdatePrices) {
 await updateStockPrices();
 } else {
-// Fetch latest prices from Supabase
 await fetchCurrentPrices();
 }
 
-// Update UI based on current user role
 if(currentUser) {
 if(currentUser.role === 'participant') {
 renderHeader();
@@ -1376,17 +1521,14 @@ if(c){
 expandedPrice.textContent = formatINR(c.price);
 expandedVol.textContent = "Vol " + c.volume.toLocaleString();
 drawExpandedChart(c.history, c.name);
+updateBufferWarning(expandedSymbolSelected);
 } else {
 collapseExpanded();
 }
 }
 }
-// Admin has its own refresh cycle via startAdminRefresh()
 }
 }
-
-
-
 
 /* -------------------------
 Buy / Sell logic
@@ -1399,7 +1541,6 @@ if(!company) return;
 const cost = company.price * qty;
 if(cost > currentUser.data.cash){ alert("Not enough cash"); return; }
 
-// Show confirmation
 if(!showBuyConfirmation(symbol, qty, company.price, cost)) {
 return;
 }
@@ -1413,18 +1554,34 @@ existing.qty += qty;
 currentUser.data.investments.push({ symbol, qty, buyPrice: company.price, buyTime: Date.now() });
 }
 
+// Record buy time for buffer
+if(systemState.tradingBufferEnabled){
+const lastBuyKey = currentUser.username + '_' + symbol;
+lastBuyTimes[lastBuyKey] = Date.now();
+}
+
 await syncParticipantData();
 renderHeader();
 renderInvestments();
+updateBufferWarning(symbol);
 alert("✓ Purchase Successful!\n\nBought " + qty + " shares of " + symbol + "\nAmount Debited: " + formatINR(cost) + "\nRemaining Balance: " + formatINR(currentUser.data.cash));
 }
 
 async function sellShares(symbol, qty){
 if(!qty || qty<=0){ alert("Enter valid quantity"); return; }
+
+// Check buffer
+if(!canSellStock(symbol)){
+const lastBuyKey = currentUser.username + '_' + symbol;
+const elapsed = (Date.now() - lastBuyTimes[lastBuyKey]) / 1000;
+const remaining = Math.ceil(systemState.tradingBufferSeconds - elapsed);
+alert("Trading Buffer Active!\n\nYou must wait " + remaining + " seconds before selling " + symbol + ".\n\nThis prevents rapid buy-sell cycles.");
+return;
+}
+
 let remaining = qty;
 let totalProceeds = 0;
 
-// Calculate first
 const livePrice = systemState.companies.find(c=>c.symbol===symbol)?.price;
 if(!livePrice) { alert("Stock not found"); return; }
 
@@ -1441,12 +1598,10 @@ return;
 
 totalProceeds = livePrice * qty;
 
-// Show confirmation
 if(!showSellConfirmation(symbol, qty, livePrice, totalProceeds)) {
 return;
 }
 
-// Now execute the sale
 for(let i = currentUser.data.investments.length-1; i>=0 && remaining>0; i--){
 const inv = currentUser.data.investments[i];
 if(inv.symbol !== symbol) continue;
@@ -1460,18 +1615,28 @@ currentUser.data.cash += totalProceeds;
 await syncParticipantData();
 renderHeader();
 renderInvestments();
+updateBufferWarning(symbol);
 alert("✓ Sale Successful!\n\nSold " + qty + " shares of " + symbol + "\nAmount Credited: " + formatINR(totalProceeds) + "\nNew Balance: " + formatINR(currentUser.data.cash));
 }
 
 async function sellInvestment(index){
 const inv = currentUser.data.investments[index];
 if(!inv) return;
+
+// Check buffer
+if(!canSellStock(inv.symbol)){
+const lastBuyKey = currentUser.username + '_' + inv.symbol;
+const elapsed = (Date.now() - lastBuyTimes[lastBuyKey]) / 1000;
+const remaining = Math.ceil(systemState.tradingBufferSeconds - elapsed);
+alert("Trading Buffer Active!\n\nYou must wait " + remaining + " seconds before selling " + inv.symbol + ".\n\nThis prevents rapid buy-sell cycles.");
+return;
+}
+
 const company = systemState.companies.find(c=>c.symbol===inv.symbol);
 const live = company ? company.price : inv.buyPrice;
 const proceeds = live * inv.qty;
 const profitLoss = proceeds - (inv.buyPrice * inv.qty);
 
-// Show confirmation
 if(!showSellConfirmation(inv.symbol, inv.qty, live, proceeds)) {
 return;
 }
@@ -1508,7 +1673,6 @@ formatINR(totalCost) + " will be deducted from your account.\n\n" +
 );
 }
 
-
 function showSellConfirmation(symbol, qty, livePrice, totalProceeds) {
 return confirm(
 "CONFIRM SALE\n\n" +
@@ -1522,21 +1686,8 @@ formatINR(totalProceeds) + " will be deposited to your account.\n\n" +
 }
 
 /* -------------------------
-Controls
-------------------------- */
-
-intervalSelect.addEventListener('change', async (e)=>{
-systemState.intervalMs = Number(e.target.value);
-await saveSystemConfig();
-restartTicker();
-});
-
-
-/* -------------------------
 Ticker control
 ------------------------- */
-
-
 
 function startTicker(){
 stopTicker();
@@ -1582,6 +1733,21 @@ document.getElementById('stopMarketBtn').addEventListener('click', async ()=>{
 await stopMarket();
 });
 
+// Admin interval change handler
+document.getElementById('adminIntervalSelect').addEventListener('change', async (e)=>{
+systemState.intervalMs = Number(e.target.value);
+await saveSystemConfig();
+restartTicker();
+alert('Update interval changed to ' + (systemState.intervalMs/1000) + ' seconds');
+});
+
+// Trading buffer toggle handler
+document.getElementById('tradingBufferToggle').addEventListener('change', async (e)=>{
+systemState.tradingBufferEnabled = e.target.checked;
+await saveSystemConfig();
+alert('Trading buffer ' + (systemState.tradingBufferEnabled ? 'enabled' : 'disabled'));
+});
+
 document.getElementById('addParticipantBtn').addEventListener('click', addParticipant);
 
 document.getElementById('saveParticipantBtn').addEventListener('click', async ()=>{
@@ -1622,9 +1788,3 @@ init();
 </script>
 </body>
 </html>
-
-
-
-
-
-
